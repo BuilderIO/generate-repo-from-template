@@ -1,0 +1,17 @@
+{
+  "name": "@builder.io/generate-repo-from-template",
+  "version": "0.0.1",
+  "bin": {
+    "generate-repo-from-template": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node src/test.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "inquirer": "^8.2.4",
+    "fs-extra": "^11.1.1",
+    "progress": "^2.0.3",
+    "chalk": "^4.1.2"
+  }
+}
