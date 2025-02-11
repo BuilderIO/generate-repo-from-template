@@ -11,7 +11,6 @@ const ROOT_EXAMPLES_DIR = "packages/sdks/snippets";
 const GITHUB_RAW_URL = "https://raw.githubusercontent.com/BuilderIO/builder/main";
 const GITHUB_HTML_URL = "https://github.com/BuilderIO/builder/tree/main";
 
-// Export shared constants
 const CONSTANTS = {
   ROOT_EXAMPLES_DIR,
   GITHUB_HTML_URL,

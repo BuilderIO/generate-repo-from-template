@@ -3,9 +3,10 @@
 const fs = require("fs-extra");
 const path = require("path");
 const chalk = require("chalk");
-const { utils, getExampleFolders } = require('./index.js');
+const { utils, getExampleFolders, generateTemplate } = require('./index.js');
 
 const MY_API_KEY = 'ad30f9a246614faaa6a03374f83554c9';
+const TEST_DIR = 'test-results';
 
 // Extend the base log with test-specific styling
 const log = {
@@ -25,88 +26,190 @@ async function getAllTemplates() {
   return examples;
 }
 
-async function testTemplate(template) {
-  log.info(`\nTesting template: ${chalk.cyan(template)}`);
-  
-  const testDir = path.join(process.cwd(), 'test-results', template);
-  const results = {
-    template,
-    setup: false,
-    errors: [],
-    ...utils.categorizeTemplate(template),
-    url: utils.getTemplateUrl(template)
-  };
+async function createTestProject(framework, gen, template) {
+  const projectName = `${framework.toLowerCase().replace('.', '')}-${gen.toLowerCase()}-${template}`;
+  const projectDir = path.join(process.cwd(), TEST_DIR, projectName);
 
   try {
-    await fs.remove(testDir);
-    await fs.ensureDir(testDir);
-
-    const { generateTemplate } = require('./index.js');
     await generateTemplate({
-      directory: testDir,
+      directory: projectDir,
       template,
       apiKey: MY_API_KEY,
-      version: 'latest',
       silent: true
     });
-    results.setup = true;
-
-    return results;
+    return { success: true, path: projectDir };
   } catch (error) {
-    results.errors.push(`Test failed: ${error.message}`);
-    return results;
+    return { success: false, error: error.message };
   }
 }
 
-async function runTests() {
-  log.title('Running Template Tests');
-  const templates = await getAllTemplates();
+async function testPromptChoices() {
+  const examples = await getAllTemplates();
+  const results = {
+    prompts: [],
+    errors: [],
+    projects: []
+  };
 
-  if (templates.length === 0) {
-    log.error('No templates found in the examples directory');
-    process.exit(1);
-  }
+  try {
+    // Test directory name validation
+    const directoryValidation = {
+      name: 'Directory Name Validation',
+      tests: [
+        { input: '', expected: false, message: 'should reject empty input' },
+        { input: 'valid-name', expected: true, message: 'should accept valid name' },
+        { input: 'invalid@name', expected: false, message: 'should reject invalid characters' },
+      ]
+    };
 
-  const results = [];
-  for (const template of templates) {
-    const result = await testTemplate(template);
-    results.push(result);
-  }
+    const validateDirectory = (input) => {
+      if (!input.length) return 'Project name is required';
+      if (!/^[a-zA-Z0-9-_]+$/.test(input)) return 'Project name can only contain letters, numbers, dashes and underscores';
+      return true;
+    };
 
-  log.title('Test Results');
-  
-  let passedCount = 0;
-  let failedCount = 0;
-
-  results.forEach(result => {
-    const passed = result.setup && result.errors.length === 0;
-    if (passed) {
-      passedCount++;
-      log.success(`${result.template} (${result.framework} - ${result.generation})`);
-      console.log(chalk.gray(`  URL: ${result.url}`));
-      console.log(chalk.green('  Status: Template downloaded successfully'));
-    } else {
-      failedCount++;
-      log.error(`${result.template} (${result.framework} - ${result.generation})`);
-      console.log(chalk.gray(`  URL: ${result.url}`));
-      console.log(chalk.gray('  Status:'));
-      console.log(chalk.gray(`    Setup: ${result.setup ? '✓' : '✗'}`));
-      if (result.errors.length > 0) {
-        console.log(chalk.gray('  Errors:'));
-        result.errors.forEach(error => {
-          console.log(chalk.gray(`    - ${error}`));
-        });
+    directoryValidation.tests.forEach(test => {
+      const result = validateDirectory(test.input);
+      const passed = (result === true) === test.expected;
+      if (!passed) {
+        results.errors.push(`Directory validation failed: ${test.message}`);
       }
+    });
+    results.prompts.push(directoryValidation);
+
+    // Test framework choices
+    const frameworkChoices = ['React', 'Next.js', 'Vue', 'Svelte', 'Angular', 'Nuxt', 'Qwik', 'Remix', 'SolidJS', 'SvelteKit', 'Vue', 'React Native'];
+    results.prompts.push({
+      name: 'Framework Choices',
+      choices: frameworkChoices
+    });
+
+    // Test SDK generation choices
+    const genChoices = ['Gen1', 'Gen2'];
+    results.prompts.push({
+      name: 'SDK Generation Choices',
+      choices: genChoices
+    });
+
+    // Clean up previous test results
+    await fs.remove(path.join(process.cwd(), TEST_DIR));
+    await fs.ensureDir(path.join(process.cwd(), TEST_DIR));
+
+    // Test template filtering and create projects
+    const templateTests = [];
+    for (const framework of frameworkChoices) {
+      for (const gen of genChoices) {
+        try {
+          const filteredTemplates = examples.filter(example => {
+            const category = utils.categorizeTemplate(example);
+            return category?.framework === framework && category?.gen === gen;
+          });
+
+          const test = {
+            framework,
+            gen,
+            templatesFound: filteredTemplates.length,
+            templates: filteredTemplates.map(template => ({
+              name: `${template} ${chalk.gray(`(${utils.getTemplateUrl(template)})`)}`,
+              value: template
+            }))
+          };
+
+          // Create test projects for valid templates
+          if (filteredTemplates.length > 0) {
+            for (const template of filteredTemplates) {
+              const projectResult = await createTestProject(framework, gen, template);
+              results.projects.push({
+                framework,
+                gen,
+                template,
+                ...projectResult
+              });
+            }
+          }
+
+          templateTests.push(test);
+        } catch (error) {
+          results.errors.push(`Failed to filter templates for ${framework} ${gen}: ${error.message}`);
+        }
+      }
+    }
+    results.prompts.push({
+      name: 'Template Filtering',
+      tests: templateTests
+    });
+
+  } catch (error) {
+    results.errors.push(`Test suite failed: ${error.message}`);
+  }
+
+  return results;
+}
+
+async function runTests() {
+  log.title('Running CLI Prompt Tests');
+
+  const results = await testPromptChoices();
+  
+  log.title('Test Results');
+
+  // Display prompt test results
+  results.prompts.forEach(prompt => {
+    log.info(`\nTesting: ${prompt.name}`);
+    
+    if (prompt.tests) {
+      prompt.tests.forEach(test => {
+        if (prompt.name === 'Template Filtering') {
+          const status = test.templatesFound > 0 ? chalk.green('✓') : chalk.yellow('⚠');
+          console.log(`  ${status} ${test.framework} - ${test.gen}: ${test.templatesFound} templates`);
+          if (test.templatesFound > 0) {
+            test.templates.forEach(template => {
+              console.log(`    - ${template.name}`);
+            });
+          }
+        } else {
+          console.log(`  - ${test.message}`);
+        }
+      });
+    } else if (prompt.choices) {
+      console.log('  Available choices:');
+      prompt.choices.forEach(choice => {
+        console.log(`    - ${choice}`);
+      });
     }
   });
 
+  // Display project creation results
+  if (results.projects.length > 0) {
+    log.info('\nProject Creation Results:');
+    results.projects.forEach(project => {
+      const status = project.success ? chalk.green('✓') : chalk.red('✖');
+      console.log(`  ${status} ${project.framework} - ${project.gen} - ${project.template}`);
+      if (project.success) {
+        console.log(chalk.gray(`    Created at: ${project.path}`));
+      } else {
+        console.log(chalk.red(`    Failed: ${project.error}`));
+      }
+    });
+  }
+
+  // Display errors if any
+  if (results.errors.length > 0) {
+    log.error('\nErrors:');
+    results.errors.forEach(error => {
+      console.log(chalk.red(`  - ${error}`));
+    });
+  }
+
+  // Summary
   console.log('\nSummary:');
-  console.log(`Total: ${results.length}`);
-  console.log(`Passed: ${chalk.green(passedCount)}`);
-  console.log(`Failed: ${chalk.red(failedCount)}`);
+  console.log(`Total Prompts Tested: ${results.prompts.length}`);
+  console.log(`Projects Created: ${chalk.cyan(results.projects.filter(p => p.success).length)}`);
+  console.log(`Projects Failed: ${chalk.red(results.projects.filter(p => !p.success).length)}`);
+  console.log(`Errors Found: ${chalk.red(results.errors.length)}`);
 
   // Exit with appropriate code
-  process.exit(failedCount > 0 ? 1 : 0);
+  process.exit(results.errors.length > 0 ? 1 : 0);
 }
 
 runTests().catch(error => {
