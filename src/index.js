@@ -111,15 +111,22 @@ async function getExampleFolders() {
     });
 
     const html = response.data;
-    const dirRegex = new RegExp(`href="/BuilderIO/builder/tree/main/${ROOT_EXAMPLES_DIR}/([^"]+)"`, 'g');
-    const examples = new Set();
-    
-    let match;
-    while ((match = dirRegex.exec(html)) !== null) {
-      examples.add(match[1]);
-    }
 
-    return Array.from(examples);
+    // Extract JSON data from the embedded script tag
+    const jsonDataMatch = html.match(/<script type="application\/json" data-target="react-app\.embeddedData">(.+?)<\/script>/s);
+    
+    if (!jsonDataMatch || !jsonDataMatch[1]) {
+      throw new Error("Could not find embedded data in GitHub HTML");
+    }
+    
+    const jsonData = JSON.parse(jsonDataMatch[1]);
+    const treeItems = jsonData.payload.tree.items;
+    
+    const examples = treeItems
+      .filter(item => item.contentType === "directory")
+      .map(item => item.name);
+    
+    return examples;
   } catch (error) {
     console.error("Error fetching examples:", error.message);
     process.exit(1);
@@ -128,28 +135,37 @@ async function getExampleFolders() {
 
 async function getFilesInDirectory(dirPath) {
   try {
-    const response = await axios.get(`${GITHUB_HTML_URL}/${dirPath}`, {
+    // Encode the directory path for the URL
+    const encodedDirPath = dirPath.split('/')
+      .map(segment => encodeURIComponent(segment))
+      .join('/');
+      
+    const response = await axios.get(`${GITHUB_HTML_URL}/${encodedDirPath}`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
     });
 
     const html = response.data;
-    const fileRegex = new RegExp(`href="/BuilderIO/builder/blob/main/${dirPath}/([^"]+)"`, 'g');
-    const dirRegex = new RegExp(`href="/BuilderIO/builder/tree/main/${dirPath}/([^"]+)"`, 'g');
     
-    const files = new Set();
-    const dirs = new Set();
+    const jsonDataMatch = html.match(/<script type="application\/json" data-target="react-app\.embeddedData">(.+?)<\/script>/s);
     
-    let match;
-    while ((match = fileRegex.exec(html)) !== null) {
-      files.add(match[1]);
+    if (!jsonDataMatch || !jsonDataMatch[1]) {
+      throw new Error("Could not find embedded data in GitHub HTML");
     }
-    while ((match = dirRegex.exec(html)) !== null) {
-      dirs.add(match[1]);
-    }
+    
+    const jsonData = JSON.parse(jsonDataMatch[1]);
+    const treeItems = jsonData.payload.tree.items;
+    
+    const files = treeItems
+      .filter(item => item.contentType === "file")
+      .map(item => item.name);
+      
+    const dirs = treeItems
+      .filter(item => item.contentType === "directory")
+      .map(item => item.name);
 
-    return { files: Array.from(files), dirs: Array.from(dirs) };
+    return { files, dirs };
   } catch (error) {
     console.error(`Error fetching directory contents: ${dirPath}`, error.message);
     return { files: [], dirs: [] };
@@ -158,7 +174,12 @@ async function getFilesInDirectory(dirPath) {
 
 async function downloadFile(filePath, targetPath) {
   try {
-    const response = await axios.get(`${GITHUB_RAW_URL}/${filePath}`, {
+    // Encode the file path for the URL
+    const encodedFilePath = filePath.split('/')
+      .map(segment => encodeURIComponent(segment))
+      .join('/');
+      
+    const response = await axios.get(`${GITHUB_RAW_URL}/${encodedFilePath}`, {
       responseType: 'text',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
